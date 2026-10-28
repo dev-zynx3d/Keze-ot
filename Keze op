@@ -2,7 +2,7 @@
 --!optimize 2
 
 -- ============================================================
--- KR Optimize + FPS Counter (script único)
+-- KR Optimize + FPS Counter (script único e completo)
 -- Blox Fruits Performance - Mobile
 -- ============================================================
 
@@ -25,7 +25,6 @@ local FPS_SMOOTH_SAMPLES = 4
 
 -- ============================================================
 -- STATE STORE
--- Guarda apenas propriedades modificadas pelo otimizador.
 -- ============================================================
 local StateStore = {
     _storage = {} :: { [Instance]: { [string]: any } },
@@ -269,7 +268,6 @@ local TerrainOptimizer = {
 
 -- ============================================================
 -- OBJECT TRACKER
--- Uma única conexão global para novos objetos relevantes.
 -- ============================================================
 local ObjectTracker = {
     _connection = nil :: RBXScriptConnection?,
@@ -406,9 +404,7 @@ local PerformanceMonitor = {
 }
 
 -- ============================================================
--- UI MANAGER
--- Janela "KR Optimize" + contador de FPS integrado.
--- Sistema de arraste touch/mouse compatível com mobile.
+-- UI MANAGER (completo)
 -- ============================================================
 local UIManager = {
     _screenGui = nil :: ScreenGui?,
@@ -464,7 +460,6 @@ local UIManager = {
         gui.Parent = PlayerGui
         self._screenGui = gui
 
-        -- Frame principal
         local main = Instance.new("Frame")
         main.Size = UDim2.new(0, 260, 0, 290)
         main.Position = UDim2.new(0.5, -130, 0.5, -145)
@@ -479,7 +474,6 @@ local UIManager = {
         corner.CornerRadius = UDim.new(0, 12)
         corner.Parent = main
 
-        -- Título
         local title = Instance.new("TextLabel")
         title.Size = UDim2.new(1, 0, 0, 30)
         title.Position = UDim2.new(0, 0, 0, 10)
@@ -490,7 +484,6 @@ local UIManager = {
         title.TextSize = 18
         title.Parent = main
 
-        -- Subtítulo
         local subtitle = Instance.new("TextLabel")
         subtitle.Size = UDim2.new(1, 0, 0, 18)
         subtitle.Position = UDim2.new(0, 0, 0, 38)
@@ -501,7 +494,6 @@ local UIManager = {
         subtitle.TextSize = 12
         subtitle.Parent = main
 
-        -- Botão fechar
         local closeBtn = Instance.new("TextButton")
         closeBtn.Size = UDim2.new(0, 30, 0, 30)
         closeBtn.Position = UDim2.new(1, -35, 0, 5)
@@ -515,7 +507,6 @@ local UIManager = {
         closeCorner.CornerRadius = UDim.new(0, 6)
         closeCorner.Parent = closeBtn
 
-        -- Botões de preset
         local presetNames = {"NORMAL", "BALANCEADO", "EXTREMO", "ULTRA BATATA"}
         local presetColors = {
             NORMAL = Color3.fromRGB(45, 45, 45),
@@ -545,7 +536,6 @@ local UIManager = {
             end)
         end
 
-        -- Labels de status (FPS e preset)
         self._fpsLabel = Instance.new("TextLabel")
         self._fpsLabel.Size = UDim2.new(1, -20, 0, 20)
         self._fpsLabel.Position = UDim2.new(0, 10, 0, 230)
@@ -561,4 +551,12 @@ local UIManager = {
         self._presetLabel.Size = UDim2.new(1, -20, 0, 20)
         self._presetLabel.Position = UDim2.new(0, 10, 0, 252)
         self._presetLabel.BackgroundTransparency = 1
-        self._presetLabel.Text 
+        self._presetLabel.Text = "Preset: NORMAL"
+        self._presetLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+        self._presetLabel.Font = Enum.Font.Gotham
+        self._presetLabel.TextSize = 13
+        self._presetLabel.TextXAlignment = Enum.TextXAlignment.Left
+        self._presetLabel.Parent = main
+
+        local float = Instance.new("TextButton")
+        float.Size = UDim2.new(
