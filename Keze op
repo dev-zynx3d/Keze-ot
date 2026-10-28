@@ -1,0 +1,564 @@
+--!strict
+--!optimize 2
+
+-- ============================================================
+-- KR Optimize + FPS Counter (script único)
+-- Blox Fruits Performance - Mobile
+-- ============================================================
+
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local Terrain = Workspace:WaitForChild("Terrain")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- CONFIGURAÇÕES
+-- ============================================================
+local BATCH_SIZE = 100
+local FPS_SAMPLE_INTERVAL = 0.25
+local FPS_SMOOTH_SAMPLES = 4
+
+-- ============================================================
+-- STATE STORE
+-- Guarda apenas propriedades modificadas pelo otimizador.
+-- ============================================================
+local StateStore = {
+    _storage = {} :: { [Instance]: { [string]: any } },
+
+    save = function(self, instance: Instance, property: string, currentValue: any)
+        local entry = self._storage[instance]
+        if not entry then
+            entry = {}
+            self._storage[instance] = entry
+        end
+        if entry[property] == nil then
+            entry[property] = currentValue
+        end
+    end,
+
+    restoreAll = function(self)
+        for instance, entry in pairs(self._storage) do
+            for prop, value in pairs(entry) do
+                pcall(function()
+                    (instance :: any)[prop] = value
+                end)
+            end
+        end
+        self._storage = {}
+    end,
+}
+
+-- ============================================================
+-- PRESETS
+-- ============================================================
+type Preset = {
+    name: string,
+    globalShadows: boolean?,
+    brightness: number?,
+    disablePostEffects: boolean,
+    disableParticles: boolean,
+    reduceParticles: boolean,
+    simplifyMaterials: boolean,
+    stripTextures: boolean,
+    simplifyWater: boolean,
+    aggressiveLights: boolean,
+    disableAtmosphere: boolean,
+    targetFps: number?,
+}
+
+local Presets: { [string]: Preset } = {
+    NORMAL = {
+        name = "NORMAL",
+        globalShadows = true,
+        brightness = nil,
+        disablePostEffects = false,
+        disableParticles = false,
+        reduceParticles = false,
+        simplifyMaterials = false,
+        stripTextures = false,
+        simplifyWater = false,
+        aggressiveLights = false,
+        disableAtmosphere = false,
+        targetFps = nil,
+    },
+    BALANCEADO = {
+        name = "BALANCEADO",
+        globalShadows = true,
+        brightness = 2,
+        disablePostEffects = false,
+        disableParticles = false,
+        reduceParticles = true,
+        simplifyMaterials = false,
+        stripTextures = false,
+        simplifyWater = true,
+        aggressiveLights = false,
+        disableAtmosphere = false,
+        targetFps = 60,
+    },
+    EXTREMO = {
+        name = "EXTREMO",
+        globalShadows = false,
+        brightness = 1,
+        disablePostEffects = true,
+        disableParticles = true,
+        reduceParticles = false,
+        simplifyMaterials = true,
+        stripTextures = true,
+        simplifyWater = true,
+        aggressiveLights = true,
+        disableAtmosphere = true,
+        targetFps = 120,
+    },
+    ["ULTRA BATATA"] = {
+        name = "ULTRA BATATA",
+        globalShadows = false,
+        brightness = 1,
+        disablePostEffects = true,
+        disableParticles = true,
+        reduceParticles = false,
+        simplifyMaterials = true,
+        stripTextures = true,
+        simplifyWater = true,
+        aggressiveLights = true,
+        disableAtmosphere = true,
+        targetFps = 120,
+    },
+}
+
+local PresetManager = {
+    current = "NORMAL" :: string,
+    get = function(self): Preset
+        return Presets[self.current]
+    end,
+    set = function(self, name: string)
+        if Presets[name] then
+            self.current = name
+        end
+    end,
+}
+
+-- ============================================================
+-- LIGHTING OPTIMIZER
+-- ============================================================
+local LightingOptimizer = {
+    optimize = function(preset: Preset)
+        local props = {"GlobalShadows", "Brightness", "Ambient", "OutdoorAmbient", "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "FogStart", "FogEnd"}
+        for _, prop in ipairs(props) do
+            StateStore:save(Lighting, prop, (Lighting :: any)[prop])
+        end
+
+        if preset.globalShadows ~= nil then
+            Lighting.GlobalShadows = preset.globalShadows
+        end
+        if preset.brightness ~= nil then
+            Lighting.Brightness = preset.brightness
+        end
+        if preset.name == "EXTREMO" or preset.name == "ULTRA BATATA" then
+            Lighting.EnvironmentDiffuseScale = 0
+            Lighting.EnvironmentSpecularScale = 0
+        elseif preset.name == "BALANCEADO" then
+            Lighting.EnvironmentDiffuseScale = 0.5
+            Lighting.EnvironmentSpecularScale = 0.5
+        end
+
+        for _, obj in ipairs(Lighting:GetChildren()) do
+            if obj:IsA("PostEffect") then
+                StateStore:save(obj, "Enabled", obj.Enabled)
+                if preset.disablePostEffects then
+                    obj.Enabled = false
+                elseif preset.name == "BALANCEADO" then
+                    if obj:IsA("BloomEffect") or obj:IsA("BlurEffect") or obj:IsA("SunRaysEffect") or obj:IsA("DepthOfFieldEffect") then
+                        obj.Enabled = false
+                    else
+                        obj.Enabled = true
+                    end
+                else
+                    obj.Enabled = true
+                end
+            elseif obj:IsA("Atmosphere") then
+                StateStore:save(obj, "Density", obj.Density)
+                if preset.disableAtmosphere then
+                    obj.Density = 0
+                end
+            end
+        end
+    end,
+}
+
+-- ============================================================
+-- PARTICLE OPTIMIZER
+-- ============================================================
+local ParticleOptimizer = {
+    optimizeVisualEffect = function(obj: Instance, preset: Preset)
+        local function saveAndSet(instance: Instance, value: boolean)
+            local inst = instance :: any
+            if inst.Enabled ~= nil then
+                StateStore:save(instance, "Enabled", inst.Enabled)
+                inst.Enabled = value
+            end
+        end
+
+        if obj:IsA("ParticleEmitter") then
+            saveAndSet(obj, not preset.disableParticles)
+            if preset.reduceParticles and not preset.disableParticles then
+                StateStore:save(obj, "Rate", obj.Rate)
+                obj.Rate = math.min(obj.Rate, 10)
+            end
+            if preset.disableParticles then
+                pcall(function() obj:Clear() end)
+            end
+        elseif obj:IsA("Trail") or obj:IsA("Beam") then
+            saveAndSet(obj, not preset.disableParticles)
+        elseif obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+            saveAndSet(obj, not preset.disableParticles)
+        end
+    end,
+}
+
+-- ============================================================
+-- MATERIAL / TEXTURE OPTIMIZER
+-- ============================================================
+local MaterialOptimizer = {
+    optimizePart = function(part: BasePart, preset: Preset)
+        if preset.simplifyMaterials then
+            StateStore:save(part, "Material", part.Material)
+            StateStore:save(part, "Reflectance", part.Reflectance)
+            part.Material = Enum.Material.SmoothPlastic
+            part.Reflectance = 0
+        end
+        if preset.stripTextures then
+            if part:IsA("MeshPart") then
+                StateStore:save(part, "TextureID", part.TextureID)
+                part.TextureID = ""
+            end
+            for _, child in ipairs(part:GetChildren()) do
+                if child:IsA("Decal") or child:IsA("Texture") then
+                    StateStore:save(child, "Transparency", child.Transparency)
+                    child.Transparency = 1
+                elseif child:IsA("SurfaceAppearance") then
+                    StateStore:save(child, "Enabled", child.Enabled)
+                    child.Enabled = false
+                end
+            end
+        end
+    end,
+}
+
+-- ============================================================
+-- TERRAIN OPTIMIZER
+-- ============================================================
+local TerrainOptimizer = {
+    optimize = function(preset: Preset)
+        local props = {"WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterTransparency"}
+        for _, prop in ipairs(props) do
+            StateStore:save(Terrain, prop, (Terrain :: any)[prop])
+        end
+        if preset.simplifyWater then
+            Terrain.WaterWaveSize = 0
+            Terrain.WaterWaveSpeed = 0
+            Terrain.WaterReflectance = 0
+            Terrain.WaterTransparency = 0.3
+        end
+    end,
+}
+
+-- ============================================================
+-- OBJECT TRACKER
+-- Uma única conexão global para novos objetos relevantes.
+-- ============================================================
+local ObjectTracker = {
+    _connection = nil :: RBXScriptConnection?,
+
+    processNewObject = function(obj: Instance)
+        local preset = PresetManager:get()
+        if obj:IsA("BasePart") then
+            MaterialOptimizer.optimizePart(obj, preset)
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+            ParticleOptimizer.optimizeVisualEffect(obj, preset)
+        elseif obj:IsA("Light") and preset.aggressiveLights then
+            StateStore:save(obj, "Enabled", obj.Enabled)
+            obj.Enabled = false
+        elseif obj:IsA("PostEffect") then
+            StateStore:save(obj, "Enabled", obj.Enabled)
+            obj.Enabled = not preset.disablePostEffects
+        end
+    end,
+
+    start = function(self)
+        if self._connection then return end
+        self._connection = Workspace.DescendantAdded:Connect(function(obj)
+            self.processNewObject(obj)
+        end)
+    end,
+
+    stop = function(self)
+        if self._connection then
+            self._connection:Disconnect()
+            self._connection = nil
+        end
+    end,
+}
+
+-- ============================================================
+-- OPTIMIZATION MANAGER
+-- ============================================================
+local OptimizationManager = {
+    _isApplying = false,
+    _processedCount = 0,
+
+    _processBatch = function(self, objs: {Instance}, preset: Preset)
+        for _, obj in ipairs(objs) do
+            if obj.Parent == nil then continue end
+            if obj:IsA("BasePart") then
+                MaterialOptimizer.optimizePart(obj, preset)
+                self._processedCount += 1
+            elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+                ParticleOptimizer.optimizeVisualEffect(obj, preset)
+                self._processedCount += 1
+            elseif obj:IsA("Light") and preset.aggressiveLights then
+                StateStore:save(obj, "Enabled", obj.Enabled)
+                obj.Enabled = false
+                self._processedCount += 1
+            end
+        end
+    end,
+
+    apply = function(self, presetName: string)
+        if self._isApplying then return end
+        self._isApplying = true
+
+        StateStore:restoreAll()
+        PresetManager:set(presetName)
+        local preset = PresetManager:get()
+
+        LightingOptimizer.optimize(preset)
+        TerrainOptimizer.optimize(preset)
+
+        self._processedCount = 0
+        local descendants = Workspace:GetDescendants()
+        local total = #descendants
+
+        for i = 1, total, BATCH_SIZE do
+            local batch = {}
+            for j = i, math.min(i + BATCH_SIZE - 1, total) do
+                table.insert(batch, descendants[j])
+            end
+            self:_processBatch(batch, preset)
+            task.wait()
+        end
+
+        if preset.targetFps then
+            pcall(function()
+                if setfpscap then
+                    setfpscap(preset.targetFps)
+                end
+            end)
+        end
+
+        ObjectTracker:stop()
+        ObjectTracker:start()
+
+        self._isApplying = false
+    end,
+}
+
+-- ============================================================
+-- PERFORMANCE MONITOR (FPS real)
+-- ============================================================
+local PerformanceMonitor = {
+    _fps = 0,
+    _frameCount = 0,
+    _lastSampleTime = os.clock(),
+    _samples = {} :: { number },
+
+    start = function(self, callback: (number) -> ())
+        RunService.RenderStepped:Connect(function()
+            self._frameCount += 1
+            local now = os.clock()
+            local elapsed = now - self._lastSampleTime
+            if elapsed >= FPS_SAMPLE_INTERVAL then
+                local fps = self._frameCount / elapsed
+                self._frameCount = 0
+                self._lastSampleTime = now
+
+                table.insert(self._samples, fps)
+                while #self._samples > FPS_SMOOTH_SAMPLES do
+                    table.remove(self._samples, 1)
+                end
+                local sum = 0
+                for _, v in ipairs(self._samples) do
+                    sum += v
+                end
+                self._fps = sum / #self._samples
+                callback(self._fps)
+            end
+        end)
+    end,
+
+    getFps = function(self): number
+        return self._fps
+    end,
+}
+
+-- ============================================================
+-- UI MANAGER
+-- Janela "KR Optimize" + contador de FPS integrado.
+-- Sistema de arraste touch/mouse compatível com mobile.
+-- ============================================================
+local UIManager = {
+    _screenGui = nil :: ScreenGui?,
+    _mainFrame = nil :: Frame?,
+    _floatBtn = nil :: TextButton?,
+    _fpsLabel = nil :: TextLabel?,
+    _presetLabel = nil :: TextLabel?,
+
+    _makeDraggable = function(frame: GuiObject)
+        local dragging = false
+        local dragStart = Vector2.new(0, 0)
+        local startPos = UDim2.new()
+
+        frame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = Vector2.new(input.Position.X, input.Position.Y)
+                startPos = frame.Position
+            end
+        end)
+
+        frame.InputChanged:Connect(function(input)
+            if not dragging then return end
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch then
+                local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+                frame.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+    end,
+
+    create = function(self)
+        if self._screenGui then return end
+
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "KROptimizeGui"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.DisplayOrder = 999
+        gui.Parent = PlayerGui
+        self._screenGui = gui
+
+        -- Frame principal
+        local main = Instance.new("Frame")
+        main.Size = UDim2.new(0, 260, 0, 290)
+        main.Position = UDim2.new(0.5, -130, 0.5, -145)
+        main.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        main.BackgroundTransparency = 0.1
+        main.BorderSizePixel = 0
+        main.Active = true
+        main.Parent = gui
+        self._mainFrame = main
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = main
+
+        -- Título
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, 0, 0, 30)
+        title.Position = UDim2.new(0, 0, 0, 10)
+        title.BackgroundTransparency = 1
+        title.Text = "KR Optimize"
+        title.TextColor3 = Color3.new(1, 1, 1)
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 18
+        title.Parent = main
+
+        -- Subtítulo
+        local subtitle = Instance.new("TextLabel")
+        subtitle.Size = UDim2.new(1, 0, 0, 18)
+        subtitle.Position = UDim2.new(0, 0, 0, 38)
+        subtitle.BackgroundTransparency = 1
+        subtitle.Text = "Blox Fruits Performance"
+        subtitle.TextColor3 = Color3.fromRGB(170, 170, 170)
+        subtitle.Font = Enum.Font.Gotham
+        subtitle.TextSize = 12
+        subtitle.Parent = main
+
+        -- Botão fechar
+        local closeBtn = Instance.new("TextButton")
+        closeBtn.Size = UDim2.new(0, 30, 0, 30)
+        closeBtn.Position = UDim2.new(1, -35, 0, 5)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        closeBtn.Text = "X"
+        closeBtn.TextColor3 = Color3.new(1, 1, 1)
+        closeBtn.Font = Enum.Font.GothamBold
+        closeBtn.TextSize = 14
+        closeBtn.Parent = main
+        local closeCorner = Instance.new("UICorner")
+        closeCorner.CornerRadius = UDim.new(0, 6)
+        closeCorner.Parent = closeBtn
+
+        -- Botões de preset
+        local presetNames = {"NORMAL", "BALANCEADO", "EXTREMO", "ULTRA BATATA"}
+        local presetColors = {
+            NORMAL = Color3.fromRGB(45, 45, 45),
+            BALANCEADO = Color3.fromRGB(40, 120, 60),
+            EXTREMO = Color3.fromRGB(160, 80, 30),
+            ["ULTRA BATATA"] = Color3.fromRGB(180, 40, 40),
+        }
+        for i, presetName in ipairs(presetNames) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, -20, 0, 35)
+            btn.Position = UDim2.new(0, 10, 0, 62 + (i - 1) * 40)
+            btn.BackgroundColor3 = presetColors[presetName] or Color3.fromRGB(40, 40, 40)
+            btn.Text = presetName
+            btn.TextColor3 = Color3.new(1, 1, 1)
+            btn.Font = Enum.Font.GothamSemibold
+            btn.TextSize = 14
+            btn.Parent = main
+            local btnCorner = Instance.new("UICorner")
+            btnCorner.CornerRadius = UDim.new(0, 8)
+            btnCorner.Parent = btn
+
+            btn.MouseButton1Click:Connect(function()
+                OptimizationManager:apply(presetName)
+                if self._presetLabel then
+                    self._presetLabel.Text = "Preset: " .. presetName
+                end
+            end)
+        end
+
+        -- Labels de status (FPS e preset)
+        self._fpsLabel = Instance.new("TextLabel")
+        self._fpsLabel.Size = UDim2.new(1, -20, 0, 20)
+        self._fpsLabel.Position = UDim2.new(0, 10, 0, 230)
+        self._fpsLabel.BackgroundTransparency = 1
+        self._fpsLabel.Text = "FPS: --"
+        self._fpsLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+        self._fpsLabel.Font = Enum.Font.GothamBold
+        self._fpsLabel.TextSize = 13
+        self._fpsLabel.TextXAlignment = Enum.TextXAlignment.Left
+        self._fpsLabel.Parent = main
+
+        self._presetLabel = Instance.new("TextLabel")
+        self._presetLabel.Size = UDim2.new(1, -20, 0, 20)
+        self._presetLabel.Position = UDim2.new(0, 10, 0, 252)
+        self._presetLabel.BackgroundTransparency = 1
+        self._presetLabel.Text 
